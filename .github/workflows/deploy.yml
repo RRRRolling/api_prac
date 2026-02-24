@@ -33,5 +33,5 @@ jobs:
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
-          app-name: '你的Azure应用名称'
+          app-name: 'my-quant-api-2026'
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
