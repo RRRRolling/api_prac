@@ -2,37 +2,49 @@ name: Quant-API-Pipeline
 
 on:
   push:
-    branches: [ "main" ]  # 当你向 main 分支推送代码时触发
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
 
+    steps:
+      # 1. 拉取你的代码
+      - uses: actions/checkout@v4
+
+      # 2. 安装 Python 环境 (建议用 3.10，性能和兼容性均衡)
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
+      # 3. 核心修复：安装依赖，确保 pytest 被装进系统路径
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # 额外确保测试工具存在，防止 requirements.txt 漏写
+          pip install pytest httpx
 
-      - name: Run Tests
+      # 4. 运行单元测试 (Risk Engineering 的核心保障)
+      - name: Run pytest
         run: |
-          pytest  # 如果这一步报错，部署会自动停止！
+          pytest test_main.py
 
-  deploy-to-azure:
-    needs: build-and-test  # 只有测试通过了，才会执行部署
+  deploy:
     runs-on: ubuntu-latest
+    needs: build-and-test  # 只有测试通过了，才会执行部署，防止坏代码上线
+    
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
-          app-name: 'my-quant-api-2026'
+          # 请确保这里的名字和 Azure Portal 左上角看到的一模一样
+          app-name: 'my-quant-api-2026' 
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: .
