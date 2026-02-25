@@ -1,98 +1,133 @@
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 import yfinance as yf
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
+from plotly.offline import plot
 
 app = FastAPI()
-# 使用 Jinja2 模板引擎
-templates = Jinja2Templates(directory="templates") 
-# 或者直接写在字符串里，但推荐存为 templates/index.html
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Duke Quant - Live Risk Engine</title>
-    <style>
-        body { font-family: 'Segoe UI', sans-serif; margin: 40px; background: #f4f7f9; }
-        .box { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
-        h2 { color: #001A57; text-align: center; }
-        input { width: 100%; padding: 12px; margin: 15px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
-        button { width: 100%; padding: 12px; background: #001A57; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
-        .res { margin-top: 25px; padding: 15px; background: #eef6ff; border-radius: 6px; border-left: 5px solid #001A57; }
-        .error { color: #d9534f; background: #fdf7f7; border-left: 5px solid #d9534f; padding: 15px; margin-top: 20px; border-radius: 6px; }
-    </style>
-</head>
-<body>
-    <div class="box">
-        <h2>📈 Real-Time Stock Risk Analysis</h2>
-        <form action="/analyze_stock" method="post">
-            <p>Enter Stock Ticker (e.g., AAPL, NVDA, TSLA):</p>
-            <input type="text" name="ticker" placeholder="AAPL" value="{{ ticker if ticker else '' }}" required>
-            <button type="submit">Get Risk Metrics</button>
-        </form>
-
-        {% if error %}
-        <div class="error">
-            <strong>Error:</strong> {{ error }}
-        </div>
-        {% endif %}
-
-        {% if vol %}
-        <div class="res">
-            <h3>{{ ticker }} Risk Assessment (1-Year)</h3>
-            <p><b>Annualized Volatility:</b> {{ vol }}%</p>
-            <p><b>Maximum Drawdown:</b> {{ mdd }}%</p>
-            <p><small>* Data Source: Yahoo Finance</small></p>
-        </div>
-        {% endif %}
-    </div>
-</body>
-</html>
-"""
-
-# 为了演示方便，直接手动创建 Template 对象
-from starlette.templating import _TemplateResponse
+def get_risk_metrics(returns, benchmark_returns=None):
+    """计算核心风险指标"""
+    if len(returns) < 2:
+        return {k: "N/A" for k in ["vol", "mdd", "sharpe", "beta"]}
+    
+    # 1. 年化波动率
+    vol = np.std(returns) * np.sqrt(252) * 100
+    
+    # 2. 最大回撤
+    cum_rets = (1 + returns).cumprod()
+    running_max = np.maximum.accumulate(cum_rets)
+    drawdown = (cum_rets - running_max) / running_max
+    max_dd = np.min(drawdown) * 100
+    
+    # 3. 夏普比率 (假设无风险利率 2%)
+    rf = 0.02 / 252
+    sharpe = (np.mean(returns) - rf) / np.std(returns) * np.sqrt(252)
+    
+    return {
+        "vol": round(vol, 2),
+        "mdd": round(max_dd, 2),
+        "sharpe": round(sharpe, 2),
+        "drawdown_series": drawdown
+    }
 
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    # 使用 jinja2 渲染，不会出现 {{ }} 占位符
-    return HTMLResponse(content=render_template(request))
+async def home():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Duke Quant Terminal</title>
+        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+        <style>
+            body { font-family: 'Inter', sans-serif; margin: 0; background: #0f172a; color: white; }
+            .container { max-width: 1000px; margin: 50px auto; padding: 20px; }
+            .card { background: #1e293b; border-radius: 12px; padding: 25px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+            input { background: #334155; border: 1px solid #475569; color: white; padding: 12px; border-radius: 6px; width: 250px; }
+            button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+            .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 20px; }
+            .stat-card { background: #334155; padding: 15px; border-radius: 8px; text-align: center; }
+            .stat-value { font-size: 24px; font-weight: bold; color: #60a5fa; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="card">
+                <h2>🚀 Quant Risk Terminal</h2>
+                <form action="/analyze" method="post">
+                    <input type="text" name="ticker" placeholder="Enter Ticker (e.g. NVDA)" required>
+                    <button type="submit">Run Full Analysis</button>
+                </form>
+            </div>
+            <div id="results"></div>
+        </div>
+    </body>
+    </html>
+    """
 
-@app.post("/analyze_stock", response_class=HTMLResponse)
-async def analyze(request: Request, ticker: str = Form(...)):
+@app.post("/analyze", response_class=HTMLResponse)
+async def analyze(ticker: str = Form(...)):
     try:
-        stock = yf.Ticker(ticker)
-        df = stock.history(period="1y")
+        # 1. 获取数据
+        ticker = ticker.upper()
+        df = yf.download(ticker, period="1y")
+        if df.empty: return "Ticker not found."
         
-        if df.empty or len(df) < 5:
-            return HTMLResponse(content=render_template(request, error=f"No data found for {ticker}"))
+        # 2. 数据清洗与收益率计算
+        df['Returns'] = df['Adj Close'].pct_change()
+        clean_returns = df['Returns'].dropna()
+        
+        # 3. 计算指标
+        metrics = get_risk_metrics(clean_returns)
+        
+        # 4. 生成 Plotly 水下回撤图
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=clean_returns.index, 
+            y=metrics['drawdown_series'] * 100,
+            fill='tozeroy',
+            line=dict(color='#ef4444'),
+            name="Drawdown"
+        ))
+        fig.update_layout(
+            title=f"{ticker} Maximum Drawdown Analysis",
+            template="plotly_dark",
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            yaxis_title="Drawdown (%)",
+            height=400
+        )
+        chart_html = plot(fig, output_type='div', include_plotlyjs=False)
 
-        # 计算收益率并移除空值
-        returns = df['Close'].pct_change().dropna()
-        
-        # 1. 年化波动率
-        vol = returns.std() * np.sqrt(252) * 100
-        
-        # 2. 最大回撤 (MDD)
-        cum_rets = (1 + returns).cumprod()
-        running_max = cum_rets.cummax()
-        drawdown = (cum_rets - running_max) / running_max
-        max_dd = drawdown.min() * 100
-
-        return HTMLResponse(content=render_template(request, 
-                                                  ticker=ticker.upper(), 
-                                                  vol=round(vol, 2), 
-                                                  mdd=round(max_dd, 2)))
+        # 5. 组合最终页面
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+            <style>
+                body {{ font-family: 'Inter', sans-serif; background: #0f172a; color: white; padding: 40px; }}
+                .grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 20px 0; }}
+                .stat-card {{ background: #1e293b; padding: 20px; border-radius: 12px; text-align: center; border: 1px solid #334155; }}
+                .stat-value {{ font-size: 28px; font-weight: bold; color: #3b82f6; }}
+                .back-btn {{ color: #94a3b8; text-decoration: none; display: inline-block; margin-bottom: 20px; }}
+            </style>
+        </head>
+        <body>
+            <a href="/" class="back-btn">← Back to Terminal</a>
+            <h1>{ticker} Analysis Report</h1>
+            <div class="grid">
+                <div class="stat-card"><div>Annualized Vol</div><div class="stat-value">{metrics['vol']}%</div></div>
+                <div class="stat-card"><div>Max Drawdown</div><div class="stat-value">{metrics['mdd']}%</div></div>
+                <div class="stat-card"><div>Sharpe Ratio</div><div class="stat-value">{metrics['sharpe']}</div></div>
+            </div>
+            <div style="background: #1e293b; padding: 20px; border-radius: 12px;">
+                {chart_html}
+            </div>
+        </body>
+        </html>
+        """
     except Exception as e:
-        return HTMLResponse(content=render_template(request, error=str(e)))
-
-def render_template(request, **context):
-    from jinja2 import Template
-    return Template(HTML_TEMPLATE).render(request=request, **context)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+        return f"Error: {str(e)}"
