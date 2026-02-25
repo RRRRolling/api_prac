@@ -4,8 +4,8 @@ python-multipart
 numpy
 yfinance
 pandas
-pandas_datareader
 plotly
 jinja2
 gunicorn
+pytest
 httpx

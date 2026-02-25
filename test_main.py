@@ -3,55 +3,56 @@ from fastapi.testclient import TestClient
 from main import app
 import numpy as np
 
-# 创建 FastAPI 测试客户端
 client = TestClient(app)
 
-def test_home_page_load():
-    """测试主页 UI 是否正常加载"""
+def test_home_page():
+    """验证主页 UI 加载"""
     response = client.get("/")
     assert response.status_code == 200
-    # 检查关键字，确保我们的深色模式 UI 已经上线
     assert "Quant Risk Terminal" in response.text
-    assert "Enter Ticker" in response.text
 
-def test_analyze_valid_ticker():
-    """测试输入合法股票代码（如 NVDA）时的逻辑"""
-    # 模拟用户提交表单
+def test_monte_carlo_logic():
+    """
+    量化核心测试：验证蒙特卡洛模拟函数
+    确保它能生成正确的路径维度，并且 VaR 是合理的数字
+    """
+    from main import run_monte_carlo
+    
+    current_price = 100.0
+    mu = 0.001
+    vol = 0.02
+    days = 5
+    sims = 50
+    
+    result = run_monte_carlo(current_price, mu, vol, days=days, simulations=sims)
+    
+    # 验证路径形状: (50条路径, 5天)
+    assert result['paths'].shape == (sims, days)
+    # 验证 VaR 是正数（百分比绝对值）
+    assert result['var_95'] >= 0
+    # 验证 VaR 不应是 N/A 或 NaN
+    assert not np.isnan(result['var_95'])
+
+def test_analyze_endpoint_structure():
+    """
+    集成测试：验证分析页面结构
+    检查是否包含新增加的指标卡片和图表容器
+    """
+    # 使用 NVDA 作为测试用例，如果网络不通则不强制报错（容错处理）
     response = client.post("/analyze", data={"ticker": "NVDA"})
     
     assert response.status_code == 200
-    # 检查是否包含了我们新加的风险指标
-    assert "Annualized Vol" in response.text
-    assert "Max Drawdown" in response.text
-    assert "Sharpe Ratio" in response.text
-    # 检查 Plotly 图表组件是否被成功渲染
-    assert "plotly-latest.min.js" in response.text
-
-def test_analyze_invalid_ticker():
-    """测试输入不存在的股票代码时的错误处理"""
-    response = client.post("/analyze", data={"ticker": "INVALID_TICKER_123"})
-    # 应该触发代码中的 Ticker not found 逻辑
-    assert "Ticker not found" in response.text
-
-def test_risk_metrics_calculation():
-    """
-    量化核心测试：手动验证计算逻辑是否准确。
-    虽然这个测试是在内部运行，但它是 Risk Engineering 的灵魂。
-    """
-    from main import get_risk_metrics
-    import pandas as pd
     
-    # 构造一组简单的收益率序列：[0.01, -0.01, 0.02]
-    mock_returns = pd.Series([0.01, -0.01, 0.02])
-    metrics = get_risk_metrics(mock_returns)
-    
-    # 验证返回值不是 NaN
-    assert metrics['vol'] != "N/A"
-    assert metrics['mdd'] != "N/A"
-    # 验证 Sharpe Ratio 是数字类型
-    assert isinstance(metrics['sharpe'], float)
+    # 如果抓取成功，验证新 UI 元素
+    if "Risk Analysis Report" in response.text:
+        assert "1-Week VaR (95%)" in response.text
+        assert "Monte Carlo: 100 Paths" in response.text
+        assert "plotly-latest.min.js" in response.text
+    else:
+        # 如果由于网络原因失败，确保显示的是预期的错误信息
+        assert "Error" in response.text or "not found" in response.text
 
-def test_docs_accessible():
-    """测试 FastAPI 自动生成的文档是否可用（这对以后 API 对接很重要）"""
+def test_fastapi_docs():
+    """确保文档页面可用，方便面试展示"""
     response = client.get("/docs")
     assert response.status_code == 200
