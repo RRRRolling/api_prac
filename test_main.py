@@ -1,35 +1,28 @@
 import pytest
+from fastapi.testclient import TestClient
 from main import app
 
-@pytest.fixture
-def client():
-    # 创建一个测试客户端，模拟浏览器行为
-    app.config['TESTING'] = True
-    with app.test_client() as client:
-        yield client
+# 创建测试客户端
+client = TestClient(app)
 
-def test_index_page(client):
-    """测试主页是否能正常加载"""
-    rv = client.get('/')
-    assert rv.status_code == 200
-    assert b"Quant Risk Calc" in rv.data
+def test_index_page():
+    """测试主页加载"""
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "FastAPI Risk Calculator" in response.text
 
-def test_var_calculation(client):
-    """测试你写的 VaR 计算接口"""
-    # 模拟访问 /calculate_var?notional=1000&sigma=0.02
-    rv = client.get('/calculate_var?notional=1000&sigma=0.02')
-    json_data = rv.get_json()
-    
-    assert rv.status_code == 200
-    # 1.65 * 0.02 * 1000 = 33.0
-    assert json_data['VaR_95'] == 33.0
+def test_var_calculation():
+    """测试 VaR 接口逻辑"""
+    # 模拟参数访问
+    response = client.get("/calculate_var?notional=1000&sigma=0.02")
+    assert response.status_code == 200
+    assert response.json() == {"VaR_95": 33.0}
 
-def test_risk_calc_post(client):
-    """测试网页表单提交计算回撤的逻辑"""
-    # 模拟用户在网页上输入收益率序列
-    test_data = {'returns': '0.01, -0.02, 0.05'}
-    rv = client.post('/', data=test_data)
-    
-    assert rv.status_code == 200
-    assert b"Volatility" in rv.data  # 确认结果页面包含波动率字样
+def test_risk_calc_post():
+    """测试表单提交后的计算逻辑"""
+    # FastAPI 处理 Form 数据的方式与 Flask 略有不同
+    response = client.post("/", data={"returns_data": "0.01, -0.02, 0.05"})
+    assert response.status_code == 200
+    assert "Volatility" in response.text
+    assert "Max Drawdown" in response.text
     
