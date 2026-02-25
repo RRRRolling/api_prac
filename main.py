@@ -57,15 +57,19 @@ async def analyze(ticker: str = Form(...)):
 
         # 2. 计算日收益率
         df['Returns'] = df['Close'].pct_change().dropna()
-        returns = df['Returns'].values
+        clean_returns = df['Returns'].dropna().values
         
         # 3. 风险计算
-        vol = np.std(returns) * np.sqrt(252) * 100
+        if len(clean_returns) < 2:
+            vol = 0.0
+            max_dd = 0.0
+        else:
+            vol = np.std(clean_returns) * np.sqrt(252) * 100
         
-        cum_rets = (1 + df['Returns']).cumprod()
-        running_max = cum_rets.cummax()
-        drawdown = (cum_rets - running_max) / running_max
-        max_dd = drawdown.min() * 100
+            cum_rets = (1 + df['Returns']).cumprod()
+            running_max = cum_rets.cummax()
+            drawdown = (cum_rets - running_max) / running_max
+            max_dd = drawdown.min() * 100
 
         # 4. 渲染结果
         res_html = HTML_TEMPLATE.replace("{% if ticker %}", "").replace("{% endif %}", "")
