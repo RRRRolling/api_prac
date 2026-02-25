@@ -22,18 +22,18 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="box">
-        <h2>📈 股票风险实时分析</h2>
+        <h2>📈 Real-Time Stock Risk Analysis</h2>
         <form action="/analyze_stock" method="post">
-            <p>输入股票代码 (例如: AAPL, NVDA, TSLA):</p>
+            <p>Enter Stock Ticker (e.g.: AAPL, NVDA, TSLA):</p>
             <input type="text" name="ticker" placeholder="AAPL" required>
-            <button type="submit">获取实时风险指标</button>
+            <button type="submit">Get Risk Metrics</button>
         </form>
         {% if ticker %}
         <div class="res">
-            <h3>{{ ticker }} 风险评估 (过去1年)</h3>
-            <p><b>年化波动率:</b> {{ vol }}%</p>
-            <p><b>最大回撤:</b> {{ mdd }}%</p>
-            <p><small>* 数据源: Yahoo Finance</small></p>
+            <h3>{{ ticker }} Risk Assessment (1-year)</h3>
+            <p><b>Annualized Volatility:</b> {{ vol }}%</p>
+            <p><b>Maximum Drawdown:</b> {{ mdd }}%</p>
+            <p><small>* Data Source: Yahoo Finance</small></p>
         </div>
         {% endif %}
     </div>
