@@ -8,3 +8,4 @@ pandas_datareader
 plotly
 jinja2
 gunicorn
+httpx
