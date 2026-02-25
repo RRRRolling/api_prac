@@ -76,7 +76,13 @@ async def analyze(ticker: str = Form(...)):
         if df.empty: return "Ticker not found."
         
         # 2. 数据清洗与收益率计算
-        df['Returns'] = df['Adj Close'].pct_change()
+        
+        price_col = 'Close' if 'Close' in df.columns else 'Adj Close'
+        
+        if price_col not in df.columns:
+            return f"Error: Required price columns not found. Available: {list(df.columns)}"
+
+        df['Returns'] = df[price_col].pct_change()
         clean_returns = df['Returns'].dropna()
         
         # 3. 计算指标
