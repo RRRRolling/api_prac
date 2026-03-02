@@ -1,58 +1,72 @@
+import numpy as np
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
-from main import app
-import numpy as np
 
-client = TestClient(app)
+import main  # 你的 main.py
 
-def test_home_page():
-    """验证主页 UI 加载"""
-    response = client.get("/")
-    assert response.status_code == 200
-    assert "Quant Risk Terminal" in response.text
+client = TestClient(main.app)
 
-def test_monte_carlo_logic():
+
+def _make_price_df(seed=0, n=260, start="2025-01-01", init_price=100.0):
     """
-    量化核心测试：验证蒙特卡洛模拟函数
-    确保它能生成正确的路径维度，并且 VaR 是合理的数字
+    生成稳定的模拟价格数据（Close列），避免测试随机失败。
+    n=260 大约一年交易日
     """
-    from main import run_monte_carlo
-    
-    current_price = 100.0
-    mu = 0.001
-    vol = 0.02
-    days = 5
-    sims = 50
-    
-    result = run_monte_carlo(current_price, mu, vol, days=days, simulations=sims)
-    
-    # 验证路径形状: (50条路径, 5天)
-    assert result['paths'].shape == (sims, days)
-    # 验证 VaR 是正数（百分比绝对值）
-    assert result['var_95'] >= 0
-    # 验证 VaR 不应是 N/A 或 NaN
-    assert not np.isnan(result['var_95'])
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range(start=start, periods=n)  # business days
 
-def test_analyze_endpoint_structure():
-    """
-    集成测试：验证分析页面结构
-    检查是否包含新增加的指标卡片和图表容器
-    """
-    # 使用 NVDA 作为测试用例，如果网络不通则不强制报错（容错处理）
-    response = client.post("/analyze", data={"ticker": "NVDA"})
-    
-    assert response.status_code == 200
-    
-    # 如果抓取成功，验证新 UI 元素
-    if "Risk Analysis Report" in response.text:
-        assert "1-Week VaR (95%)" in response.text
-        assert "Monte Carlo: 100 Paths" in response.text
-        assert "plotly-latest.min.js" in response.text
-    else:
-        # 如果由于网络原因失败，确保显示的是预期的错误信息
-        assert "Error" in response.text or "not found" in response.text
+    # 生成温和波动的收益率
+    rets = rng.normal(loc=0.0004, scale=0.01, size=n)
+    prices = init_price * np.cumprod(1 + rets)
+    df = pd.DataFrame({"Close": prices}, index=idx)
+    return df
 
-def test_fastapi_docs():
-    """确保文档页面可用，方便面试展示"""
-    response = client.get("/docs")
-    assert response.status_code == 200
+
+@pytest.fixture
+def mock_yf_download(monkeypatch):
+    """
+    mock yfinance.download：
+    - 用户ticker返回一份价格表
+    - VOO返回另一份价格表
+    """
+
+    def _fake_download(ticker, period="1y", auto_adjust=False, progress=False):
+        ticker = (ticker or "").upper()
+        if ticker == "VOO":
+            return _make_price_df(seed=42, init_price=400.0)
+        # 其他ticker都返回 asset 数据
+        return _make_price_df(seed=7, init_price=120.0)
+
+    monkeypatch.setattr(main.yf, "download", _fake_download)
+
+
+def test_home_page_ok():
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "Quant Risk Terminal" in r.text
+    assert "<form" in r.text
+
+
+def test_analyze_ok_with_mocked_data(mock_yf_download):
+    r = client.post("/analyze", data={"ticker": "NVDA"})
+    assert r.status_code == 200
+
+    # 页面关键内容检查
+    assert "NVDA Risk Analysis Report" in r.text
+    assert "VOO" in r.text  # benchmark 出现
+    assert "Cumulative Return" in r.text  # 收益率曲线标题
+    assert "Monte Carlo" in r.text  # MC 图标题
+    assert "5D VaR" in r.text  # VaR 卡片
+
+
+def test_analyze_handles_empty_df(monkeypatch):
+    # 让 yfinance.download 返回空表 => 应该提示 Ticker not found.
+    def _empty_download(*args, **kwargs):
+        return pd.DataFrame()
+
+    monkeypatch.setattr(main.yf, "download", _empty_download)
+
+    r = client.post("/analyze", data={"ticker": "XXXX"})
+    assert r.status_code == 200
+    assert "Ticker not found" in r.text
